@@ -1,0 +1,87 @@
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const mongoose = require('mongoose');
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
+
+// ===== MongoDB Setup =====
+mongoose.connect('mongodb://127.0.0.1:27017/realtime-editor', {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+});
+
+const DocSchema = new mongoose.Schema({ content: String });
+const Document = mongoose.model('Document', DocSchema);
+
+// ===== Serve Frontend HTML =====
+app.get('/', async (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Real-Time Document Editor</title>
+      <script src="/socket.io/socket.io.js"></script>
+      <style>
+        body {
+          font-family: Arial;
+          padding: 20px;
+          background: #f2f2f2;
+          text-align: center;
+        }
+        textarea {
+          width: 80%;
+          height: 400px;
+          font-size: 16px;
+          padding: 10px;
+        }
+      </style>
+    </head>
+    <body>
+      <h2>Real-Time Collaborative Document Editor</h2>
+      <textarea id="editor" placeholder="Start typing..."></textarea>
+
+      <script>
+        const socket = io();
+        const editor = document.getElementById('editor');
+
+        socket.on('load-document', (data) => {
+          editor.value = data || '';
+        });
+
+        socket.on('text-update', (data) => {
+          editor.value = data;
+        });
+
+        editor.addEventListener('input', () => {
+          socket.emit('text-update', editor.value);
+        });
+      </script>
+    </body>
+    </html>
+  `);
+});
+
+// ===== Socket.IO Events =====
+io.on('connection', async (socket) => {
+  console.log('New user connected');
+
+  const doc = await Document.findOne();
+  socket.emit('load-document', doc?.content || '');
+
+  socket.on('text-update', async (data) => {
+    socket.broadcast.emit('text-update', data);
+    await Document.updateOne({}, { content: data }, { upsert: true });
+  });
+
+  socket.on('disconnect', () => {
+    console.log('User disconnected');
+  });
+});
+
+// ===== Start Server =====
+server.listen(3000, () => {
+  console.log('Server running at http://localhost:3000');
+});
